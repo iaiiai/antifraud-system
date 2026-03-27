@@ -11,7 +11,7 @@ import com.test.antifraud.model.entity.StolenCard;
 import java.util.List;
 
 public interface AntifraudService {
-    TransactionResponse validateTransaction(TransactionRequest request);
+    TransactionResponse handleTransaction(TransactionRequest request);
 
     List<BlackListedIp> getIpList();
     AddIpResponse addIp(AddBlacklistedIpRequest request);

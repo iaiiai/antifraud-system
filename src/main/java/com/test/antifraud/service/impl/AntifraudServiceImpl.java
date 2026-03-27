@@ -9,53 +9,61 @@ import com.test.antifraud.exception.CardExistsException;
 import com.test.antifraud.exception.CardNotFoundException;
 import com.test.antifraud.exception.IPExistsException;
 import com.test.antifraud.exception.IPNotFoundException;
+import com.test.antifraud.mapper.TransactionMapper;
 import com.test.antifraud.model.entity.BlackListedIp;
 import com.test.antifraud.model.entity.StolenCard;
+import com.test.antifraud.model.entity.Transaction;
+import com.test.antifraud.model.enums.TransactionResult;
 import com.test.antifraud.repository.BlacklistedIpRepository;
 import com.test.antifraud.repository.StolenCardRepository;
+import com.test.antifraud.repository.TransactionRepository;
 import com.test.antifraud.service.AntifraudService;
+import com.test.antifraud.service.validation.TransactionValidator;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
 public class AntifraudServiceImpl implements AntifraudService {
     private final BlacklistedIpRepository blacklistedIpRepository;
     private final StolenCardRepository stolenCardRepository;
+    private final TransactionRepository transactionRepository;
+
+    private final TransactionValidator transactionValidator;
 
     @Autowired
-    public AntifraudServiceImpl(BlacklistedIpRepository blacklistedIpRepository, StolenCardRepository stolenCardRepository) {
+    public AntifraudServiceImpl(
+        BlacklistedIpRepository blacklistedIpRepository,
+        StolenCardRepository stolenCardRepository,
+        TransactionRepository transactionRepository,
+        TransactionValidator transactionValidator
+    ) {
         this.blacklistedIpRepository = blacklistedIpRepository;
         this.stolenCardRepository = stolenCardRepository;
+        this.transactionRepository = transactionRepository;
+        this.transactionValidator = transactionValidator;
     }
 
-    public TransactionResponse validateTransaction(TransactionRequest transactionRequest) {
-        int amount = transactionRequest.amount();
-        String ip = transactionRequest.ip();
-        String cardNumber = transactionRequest.number();
-        boolean blacklistedIp = blacklistedIpRepository
-                .existsByAddress(ip);
-        boolean stolenCard = stolenCardRepository
-                .existsByNumber(cardNumber);
-        Map<String, Boolean> rules = new HashMap<>();
-        rules.put("blacklistedIp", blacklistedIp);
-        rules.put("stolenCard", stolenCard);
-        List<String> violations = new ArrayList<>();
-        for (Map.Entry<String, Boolean> entry : rules.entrySet()) {
-            String ruleName = entry.getKey();
-            boolean violated = entry.getValue();
-            if (violated) {
-                violations.add(ruleName);
-            }
+    @Transactional
+    public TransactionResponse handleTransaction(TransactionRequest request) {
+        Transaction transaction = TransactionMapper.toEntity(request);
+        Long amount = transaction.getAmount();
+        String ALLOWED = TransactionResult.ALLOWED.name();
+        String MANUAL_PROCESSING = TransactionResult.MANUAL_PROCESSING.name();
+        String PROHIBITED = TransactionResult.PROHIBITED.name();
+        List<String> violations = transactionValidator.validate(request);
+        if (amount <= 200) transaction.setResult(ALLOWED);
+        else if (amount <= 1500) transaction.setResult(MANUAL_PROCESSING);
+        else transaction.setResult(PROHIBITED);
+        if (!violations.isEmpty()) {
+            transaction.setResult(PROHIBITED);
         }
-        Collections.sort(violations);
-        if (violations.isEmpty() == false) return new TransactionResponse("PROHIBITED", violations);
-        if (amount <= 200) return new TransactionResponse("ALLOWED");
-        if (amount <= 1500) return new TransactionResponse("MANUAL_PROCESSING");
-        else return new TransactionResponse("PROHIBITED");
+        Transaction saved = transactionRepository.save(transaction);
+        return TransactionMapper.toResponse(saved, violations);
     }
 
     @Transactional
